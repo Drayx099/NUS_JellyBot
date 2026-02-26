@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Interactive Jellyfish Background</title>
+  <style>
+    /* Full-screen canvas + subtle centered content demo */
+    html,body{height:100%;margin:0;background:linear-gradient(#02102b,#05233f 60%,#02102b);overflow:hidden;font-family:Inter,system-ui,Segoe UI,Roboto}
+    #c{position:fixed;inset:0;z-index:0}
+
+    /* Example page content so you can see how to place foreground UI */
+    .content{position:relative;z-index:10;display:flex;align-items:center;justify-content:center;height:100%;color:#e8f7ff;text-shadow:0 6px 24px rgba(0,0,0,0.6)}
+    .card{backdrop-filter: blur(6px) saturate(120%);background:linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));padding:28px;border-radius:12px;border:1px solid rgba(255,255,255,0.06)}
+
+    /* small helper for performance note */
+    .hint{font-size:13px;opacity:0.8;margin-top:8px}
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div class="content">
+    <div class="card">
+      <h1 style="margin:0;font-size:28px">Interactive Jellyfish Background</h1>
+      <p class="hint">Move the mouse to attract jellyfish. Click to spawn a jellyfish. Resize the window to adapt.</p>
+    </div>
+  </div>
+
+  <script>
+    // Interactive Jellyfish Background - single-file demo
+    // Features:
+    // - Canvas full-bleed, resizes with devicePixelRatio awareness
+    // - Animated jellyfish with bell + wavy tentacles
+    // - Gentle attraction to mouse; click to spawn; automatic density control
+    // - Lightweight morphing animation (no external libs)
+
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d', { alpha: true });
+
+    let DPR = Math.max(1, window.devicePixelRatio || 1);
+    function resize(){
+      DPR = Math.max(1, window.devicePixelRatio || 1);
+      canvas.width = Math.floor(innerWidth * DPR);
+      canvas.height = Math.floor(innerHeight * DPR);
+      canvas.style.width = innerWidth + 'px';
+      canvas.style.height = innerHeight + 'px';
+      ctx.setTransform(DPR,0,0,DPR,0,0);
+    }
+    addEventListener('resize', resize, {passive:true});
+    resize();
+
+    // Mouse interaction
+    const mouse = {x: innerWidth/2, y: innerHeight/2, down:false};
+    addEventListener('mousemove', e=>{ mouse.x = e.clientX; mouse.y = e.clientY; });
+    addEventListener('touchmove', e=>{ if(e.touches[0]){ mouse.x = e.touches[0].clientX; mouse.y = e.touches[0].clientY; } }, {passive:true});
+    addEventListener('mousedown', ()=>{ mouse.down=true });
+    addEventListener('mouseup', ()=>{ mouse.down=false });
+    addEventListener('click', (e)=>{ spawnJelly(e.clientX, e.clientY) });
+
+    // Utility
+    function rand(a,b){return a + Math.random()*(b-a)}
+    function lerp(a,b,t){return a + (b-a)*t}
+
+    // Jellyfish class
+    class Jelly {
+      constructor(x,y,size,color){
+        this.x = x === undefined ? rand(0, innerWidth) : x;
+        this.y = y === undefined ? rand(-100, innerHeight+100) : y;
+        this.vx = rand(-0.2,0.2);
+        this.vy = rand(-0.1,0.1);
+        this.size = size || rand(28,90); // bell radius
+        this.phase = Math.random()*Math.PI*2; // for tentacle motion
+        this.speed = rand(0.2,0.8);
+        this.color = color || `hsl(${rand(180,320)}, ${rand(60,90)}%, ${rand(55,75)}%)`;
+        this.tCount = Math.floor(4 + Math.random()*7); // tentacle count
+        this.age = 0;
+        this.noise = Math.random()*10;
+        this.id = Math.random();
+      }
+
+      update(dt){
+        // subtle vertical bob
+        this.phase += dt*0.002 + this.noise*0.0005;
+        const bob = Math.sin(this.phase*1.2) * (this.size*0.02);
+
+        // mouse attraction: jellyfish gently move toward mouse if within range
+        const dx = mouse.x - this.x;
+        const dy = mouse.y - this.y;
+        const dist = Math.hypot(dx,dy) + 0.0001;
+        const attractRange = 220 + this.size*0.5;
+
+        if(dist < attractRange){
+          // attraction strength increases when mouse is down (clicked or pressed)
+          const str = (1 - dist/attractRange) * 0.6 * (mouse.down ? 2.0 : 1.0);
+          this.vx += (dx/dist) * str * 0.02;
+          this.vy += (dy/dist) * str * 0.02;
+        }
+
+        // gentle wandering
+        this.vx = lerp(this.vx, Math.sin(this.phase*0.7+this.noise)*0.5, 0.01);
+        this.vy = lerp(this.vy, Math.cos(this.phase*0.5+this.noise)*0.2 + bob*0.02, 0.01);
+
+        // apply velocity and basic drag
+        this.x += this.vx * this.speed * 60 * dt;
+        this.y += this.vy * this.speed * 60 * dt;
+        this.vx *= 0.995; this.vy *= 0.995;
+
+        this.age += dt;
+
+        // wrap around edges gently
+        if(this.x < -this.size) this.x = innerWidth + this.size;
+        if(this.x > innerWidth + this.size) this.x = -this.size;
+        if(this.y < -this.size*2) this.y = innerHeight + this.size*2;
+        if(this.y > innerHeight + this.size*2) this.y = -this.size*2;
+      }
+
+      draw(ctx, t){
+        ctx.save();
+        ctx.translate(this.x, this.y);
+
+        // bell: radial gradient + translucent fill
+        const grad = ctx.createRadialGradient(0, -this.size*0.2, this.size*0.1, 0, 0, this.size*1.1);
+        grad.addColorStop(0, this.color.replace('hsl(','hsla(').replace(')',',0.95)'));
+        grad.addColorStop(0.5, this.color.replace('hsl(','hsla(').replace(')',',0.45)'));
+        grad.addColorStop(1, 'rgba(255,255,255,0.03)');
+
+        // bell shape
+        ctx.beginPath();
+        ctx.ellipse(0, 0, this.size*1.05, this.size*0.7, 0, Math.PI, 0, true);
+        ctx.closePath();
+        ctx.fillStyle = grad;
+        ctx.fill();
+
+        // glossy top highlight
+        ctx.beginPath();
+        ctx.ellipse(-this.size*0.1, -this.size*0.18, this.size*0.55, this.size*0.34, -0.4, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(255,255,255,0.12)';
+        ctx.fill();
+
+        // thin outline
+        ctx.lineWidth = Math.max(0.5, this.size*0.01);
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.stroke();
+
+        // tentacles: draw several sinuous lines
+        for(let i=0;i<this.tCount;i++){
+          const phase = this.phase + i*0.8;
+          const len = this.size * (1.2 + i*0.12);
+          const spread = lerp(-this.size*0.5, this.size*0.5, i / Math.max(1,this.tCount-1));
+
+          ctx.beginPath();
+          let segments = 20;
+          for(let s=0;s<=segments;s++){
+            const tseg = s / segments;
+            // base x along bell bottom
+            const bx = spread * (1 - tseg*tseg);
+            const by = this.size*0.6 + tseg * len;
+            // waving offset
+            const wobble = Math.sin(tseg*10 + phase + t*0.005*(1+i)) * (4 + this.size*0.03) * (1 - tseg);
+            const px = bx + wobble;
+            const py = by + Math.cos(phase*0.7 + tseg*6)*4*(1 - tseg);
+            if(s===0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.strokeStyle = `hsla(0,0%,100%,${0.02 + 0.18*(1 - i/this.tCount)})`;
+          ctx.lineWidth = Math.max(0.8, this.size*0.01*(1 + (this.tCount - i)*0.06));
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      }
+    }
+
+    // population control
+    let jellyfish = [];
+    function desiredCount(){
+      // target density: one jelly per ~35k px squared (coarse)
+      const area = innerWidth * innerHeight;
+      return Math.max(6, Math.floor(area / 35000));
+    }
+
+    function spawnJelly(x,y){
+      const s = rand(24,86);
+      const color = `hsl(${rand(180,320)}, ${rand(60,92)}%, ${rand(50,78)}%)`;
+      const j = new Jelly(x,y,s,color);
+      jellyfish.push(j);
+      // cap
+      if(jellyfish.length > 120) jellyfish.splice(0,1);
+    }
+
+    // initial population
+    function populate(){
+      jellyfish = [];
+      const n = desiredCount();
+      for(let i=0;i<n;i++) spawnJelly(rand(0,innerWidth), rand(0, innerHeight));
+    }
+    populate();
+
+    // subtle background bubbles for depth
+    const bubbles = [];
+    for(let i=0;i<60;i++){
+      bubbles.push({x:rand(0,innerWidth), y:rand(0,innerHeight), r:rand(1,8), speed:rand(0.01,0.3), alpha:rand(0.02,0.12)});
+    }
+
+    // animation loop
+    let last = performance.now();
+    function frame(now){
+      const dt = (now - last) / 1000; last = now;
+
+      // adapt population if resized
+      if(jellyfish.length < desiredCount()){
+        spawnJelly(rand(0,innerWidth), rand(0,innerHeight));
+      } else if(jellyfish.length > Math.max(60, desiredCount()*1.6)){
+        jellyfish.splice(0, jellyfish.length - Math.max(60, desiredCount()*1.6));
+      }
+
+      // clear with subtle gradient fade
+      ctx.clearRect(0,0,innerWidth, innerHeight);
+      // draw soft vignette-ish gradient
+      const g = ctx.createLinearGradient(0,0,0,innerHeight);
+      g.addColorStop(0, 'rgba(2,16,43,0.1)');
+      g.addColorStop(1, 'rgba(2,35,47,0.18)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0,0,innerWidth, innerHeight);
+
+      // draw bubbles
+      for(const b of bubbles){
+        b.y -= b.speed * 40 * dt;
+        if(b.y < -10) { b.y = innerHeight + 10; b.x = rand(0, innerWidth); }
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
+        ctx.fillStyle = `rgba(255,255,255,${b.alpha})`;
+        ctx.fill();
+      }
+
+      // update & draw jellyfish (sorted by size for nicer overlap)
+      jellyfish.sort((a,b)=>a.size - b.size);
+      for(const j of jellyfish){ j.update(dt); j.draw(ctx, now); }
+
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+
+    // initial spawn on first touch for touch devices
+    addEventListener('touchstart', e => { if(e.touches[0]) spawnJelly(e.touches[0].clientX, e.touches[0].clientY); }, {passive:true});
+
+    // tidy up on page hide
+    addEventListener('visibilitychange', ()=>{ if(document.hidden) cancelAnimationFrame(frame); else last = performance.now(); });
+
+    // accessibility: pause animation with 'p'
+    let running = true;
+    addEventListener('keydown', e=>{
+      if(e.key === 'p'){
+        running = !running;
+        if(running) requestAnimationFrame(frame);
+        else ctx.clearRect(0,0,innerWidth, innerHeight);
+      }
+    });
+
+  </script>
+</body>
+</html>
